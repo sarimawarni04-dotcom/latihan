@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Petualangan Tetes Air - Kuis & Papan Skor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background: linear-gradient(180deg, #4facfe 0%, #00f2fe 100%);
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .drop-zone {
+            transition: all 0.3s ease;
+            min-height: 150px;
+        }
+        .drag-item {
+            cursor: grab;
+            transition: transform 0.2s;
+            user-select: none;
+            touch-action: none;
+        }
+        .drag-item:active {
+            cursor: grabbing;
+            transform: scale(0.95);
+        }
+        .correct { background-color: #dcfce7 !important; border-color: #22c55e !important; }
+        .incorrect { background-color: #fee2e2 !important; border-color: #ef4444 !important; }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white/95 backdrop-blur-sm rounded-3xl shadow-2xl overflow-hidden">
+        <!-- Header -->
+        <div class="bg-[#4facfe] p-6 text-center text-white">
+            <h1 class="text-3xl font-bold mb-2">🌧️ Petualangan Tetes Air ☀️</h1>
+            <p class="text-lg opacity-90">Tarik kalimat ke kategori yang tepat untuk simpan skor!</p>
+        </div>
+
+        <div class="p-6">
+            <!-- Papan Skor Ringkas -->
+            <div id="leaderboard-mini" class="mb-6 bg-blue-50 p-4 rounded-2xl border border-blue-100">
+                <h3 class="text-sm font-bold text-blue-800 mb-2 uppercase tracking-wider">🏆 Papan Skor Teratas</h3>
+                <div id="leaderboard-list" class="text-xs text-blue-700 grid grid-cols-2 gap-2">
+                    Loading skor...
+                </div>
+            </div>
+
+            <!-- Score & Controls -->
+            <div class="flex justify-between items-center mb-6">
+                <div class="bg-blue-100 px-4 py-2 rounded-full font-bold text-blue-700">
+                    Skor Kamu: <span id="score">0</span> / 6
+                </div>
+                <button onclick="resetGame()" class="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded-md transition">Reset</button>
+            </div>
+
+            <!-- Items to Drag -->
+            <div id="items-container" class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-8"></div>
+
+            <!-- Drop Zones -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="flex flex-col">
+                    <h2 class="text-center font-bold text-green-700 mb-2 flex items-center justify-center gap-2">✅ FAKTA SAINS</h2>
+                    <div id="facts-zone" ondrop="drop(event)" ondragover="allowDrop(event)" class="drop-zone border-4 border-dashed border-green-200 rounded-2xl bg-green-50/50 p-4 flex flex-col gap-2"></div>
+                </div>
+                <div class="flex flex-col">
+                    <h2 class="text-center font-bold text-blue-700 mb-2 flex items-center justify-center gap-2">📖 BAGIAN CERITA</h2>
+                    <div id="fiction-zone" ondrop="drop(event)" ondragover="allowDrop(event)" class="drop-zone border-4 border-dashed border-blue-200 rounded-2xl bg-blue-50/50 p-4 flex flex-col gap-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Success/Save Modal -->
+        <div id="success-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-50">
+            <div class="bg-white p-8 rounded-3xl text-center shadow-2xl max-w-sm w-full">
+                <div class="text-6xl mb-4">🎉</div>
+                <h3 class="text-2xl font-bold text-gray-800 mb-2">Selesai!</h3>
+                <p class="text-gray-600 mb-4">Masukkan namamu untuk menyimpan skor di Papan Skor.</p>
+                <input type="text" id="player-name" placeholder="Nama kamu..." maxlength="15" 
+                       class="w-full border-2 border-blue-100 rounded-xl px-4 py-3 mb-4 focus:border-blue-400 outline-none">
+                <button id="save-btn" onclick="saveScoreToCloud()" class="w-full bg-green-500 text-white font-bold py-3 rounded-xl hover:bg-green-600 transition mb-2">Simpan Skor</button>
+                <button onclick="resetGame()" class="w-full bg-gray-100 text-gray-500 font-bold py-3 rounded-xl hover:bg-gray-200 transition">Main Lagi</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDocs, collection, query, onSnapshot, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Variables
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        let user = null;
+        let score = 0;
+        const gameData = [
+            { id: '1', text: 'Air naik ke langit (menguap) karena panas matahari.', type: 'fact' },
+            { id: '2', text: 'Dito bermimpi tubuhnya mengecil menjadi setetes air.', type: 'fiction' },
+            { id: '3', text: 'Uap air berkumpul membentuk gumpalan awan (kondensasi).', type: 'fact' },
+            { id: '4', text: 'Dito berbicara dengan teman-teman tetes air lainnya.', type: 'fiction' },
+            { id: '5', text: 'Presipitasi adalah peristiwa jatuhnya air (hujan) ke bumi.', type: 'fact' },
+            { id: '6', text: 'Dito mengajak teman-temannya membersihkan sampah di taman.', type: 'fiction' }
+        ];
+
+        // --- AUTH LOGIC ---
+        const initAuth = async () => {
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                await signInWithCustomToken(auth, __initial_auth_token);
+            } else {
+                await signInAnonymously(auth);
+            }
+        };
+        initAuth();
+
+        onAuthStateChanged(auth, (u) => {
+            user = u;
+            if (user) {
+                loadLeaderboard();
+            }
+        });
+
+        // --- GAME LOGIC ---
+        function initGame() {
+            const container = document.getElementById('items-container');
+            container.innerHTML = '';
+            document.getElementById('facts-zone').innerHTML = '';
+            document.getElementById('fiction-zone').innerHTML = '';
+            document.getElementById('success-modal').classList.add('hidden');
+            document.getElementById('save-btn').disabled = false;
+            document.getElementById('save-btn').innerText = "Simpan Skor";
+            score = 0;
+            updateScore();
+
+            const shuffled = [...gameData].sort(() => Math.random() - 0.5);
+            shuffled.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'drag-item bg-white border-2 border-gray-200 p-3 rounded-xl shadow-sm text-sm font-medium';
+                el.draggable = true;
+                el.id = `item-${item.id}`;
+                el.innerText = item.text;
+                el.dataset.type = item.type;
+                el.addEventListener('dragstart', (ev) => ev.dataTransfer.setData("text", ev.target.id));
+                
+                // Touch support
+                el.addEventListener('touchstart', handleTouchStart, {passive: false});
+                el.addEventListener('touchmove', handleTouchMove, {passive: false});
+                el.addEventListener('touchend', handleTouchEnd);
+
+                container.appendChild(el);
+            });
+        }
+
+        window.allowDrop = (ev) => ev.preventDefault();
+        window.drop = (ev) => {
+            ev.preventDefault();
+            const data = ev.dataTransfer.getData("text");
+            const el = document.getElementById(data);
+            processDrop(el, ev.currentTarget);
+        };
+
+        function processDrop(element, zone) {
+            const isFactZone = zone.id === 'facts-zone';
+            const itemType = element.dataset.type;
+
+            if ((isFactZone && itemType === 'fact') || (!isFactZone && itemType === 'fiction')) {
+                zone.appendChild(element);
+                element.classList.add('correct');
+                element.draggable = false;
+                score++;
+                updateScore();
+                if (score === gameData.length) {
+                    setTimeout(() => document.getElementById('success-modal').classList.remove('hidden'), 500);
+                }
+            } else {
+                element.classList.add('incorrect');
+                setTimeout(() => element.classList.remove('incorrect'), 500);
+            }
+        }
+
+        function updateScore() {
+            document.getElementById('score').innerText = score;
+        }
+
+        window.resetGame = initGame;
+
+        // --- FIRESTORE LOGIC ---
+        window.saveScoreToCloud = async () => {
+            const nameInput = document.getElementById('player-name');
+            const name = nameInput.value.trim() || "Anonim";
+            
+            if (!user) return;
+
+            const btn = document.getElementById('save-btn');
+            btn.disabled = true;
+            btn.innerText = "Menyimpan...";
+
+            try {
+                const scoresRef = collection(db, 'artifacts', appId, 'public', 'data', 'leaderboard');
+                await addDoc(scoresRef, {
+                    name: name,
+                    score: score,
+                    timestamp: serverTimestamp(),
+                    userId: user.uid
+                });
+                
+                btn.innerText = "Tersimpan! ✅";
+                setTimeout(() => document.getElementById('success-modal').classList.add('hidden'), 1000);
+            } catch (error) {
+                console.error("Gagal simpan:", error);
+                btn.disabled = false;
+                btn.innerText = "Gagal, Coba Lagi";
+            }
+        };
+
+        function loadLeaderboard() {
+            if (!user) return;
+            const scoresRef = collection(db, 'artifacts', appId, 'public', 'data', 'leaderboard');
+            
+            onSnapshot(scoresRef, (snapshot) => {
+                const list = document.getElementById('leaderboard-list');
+                const data = [];
+                snapshot.forEach(doc => data.push(doc.data()));
+                
+                // Urutkan di memori (Rule: No complex queries)
+                data.sort((a, b) => b.score - a.score || b.timestamp - a.timestamp);
+                
+                list.innerHTML = data.slice(0, 10).map((entry, index) => `
+                    <div class="flex justify-between border-b border-blue-100 pb-1">
+                        <span>${index + 1}. ${entry.name}</span>
+                        <span class="font-bold">${entry.score}</span>
+                    </div>
+                `).join('');
+                
+                if (data.length === 0) list.innerHTML = "Belum ada skor.";
+            }, (err) => console.error("Snapshot error:", err));
+        }
+
+        // --- Touch Logic (Global) ---
+        let activeTouchElement = null;
+        function handleTouchStart(e) {
+            activeTouchElement = e.target.closest('.drag-item');
+            if (!activeTouchElement || activeTouchElement.parentElement.classList.contains('drop-zone')) return;
+            const touch = e.touches[0];
+            activeTouchElement.style.position = 'fixed';
+            activeTouchElement.style.zIndex = '1000';
+            updateTouchPos(touch.clientX, touch.clientY);
+            e.preventDefault();
+        }
+        function handleTouchMove(e) {
+            if (activeTouchElement) updateTouchPos(e.touches[0].clientX, e.touches[0].clientY);
+            e.preventDefault();
+        }
+        function handleTouchEnd(e) {
+            if (!activeTouchElement) return;
+            const touch = e.changedTouches[0];
+            activeTouchElement.style.display = 'none';
+            const target = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.drop-zone');
+            activeTouchElement.style.display = 'block';
+            activeTouchElement.style.position = 'static';
+            if (target) processDrop(activeTouchElement, target);
+            activeTouchElement = null;
+        }
+        function updateTouchPos(x, y) {
+            activeTouchElement.style.left = (x - activeTouchElement.offsetWidth / 2) + 'px';
+            activeTouchElement.style.top = (y - activeTouchElement.offsetHeight / 2) + 'px';
+        }
+
+        window.onload = initGame;
+    </script>
+</body>
+</html>
